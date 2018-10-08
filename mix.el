@@ -2,7 +2,7 @@
 ;; MIX
 ;;
 
-(require 'cl-lib)
+(require 'cl)
 
 ;;; Code:
 
@@ -24,20 +24,22 @@
 (defun mix-word-b3 (w) (mix-word-b5 (ash w -12)))
 (defun mix-word-b2 (w) (mix-word-b5 (ash w -18)))
 (defun mix-word-b1 (w) (mix-word-b5 (ash w -24)))
-(defun mix-word-a  (w) (logand 1024 (ash w -18))) ;; b1-2
+(defun mix-word-a  (w) (+ (* 64 (mix-word-b1 w)) (mix-word-b2 w)))
 (defun mix-word-i  (w) (mix-word-b3 w))
-(defun mix-word-f  (w) (mix-word-b2 w))
-(defun mix-word-c  (w) (mix-word-b1 w))
+(defun mix-word-f  (w) (mix-word-b4 w))
+(defun mix-word-c  (w) (mix-word-b5 w))
 
-(defun mix-wordf (w)
-  "Retun string representation of mix-word"
-  (format "%s%02d.%02d.%02d.%02d.%02d"
-          (cond ((>= w 0) "+") (t "-"))
-          (mix-word-b1 w)
-          (mix-word-b2 w)
-          (mix-word-b3 w)
-          (mix-word-b4 w)
-          (mix-word-b5 w)))
+;; (defun mix-wordf (w)
+;;   "Retun string representation of mix-word"
+;;   (format "%s%02d.%02d.%02d.%02d.%02d"
+;;           (cond ((>= w 0) "+") (t "-"))
+;;           (mix-word-b1 w)
+;;           (mix-word-b2 w)
+;;           (mix-word-b3 w)
+;;           (mix-word-b4 w)
+;;           (mix-word-b5 w)))
+
+(defun mix-wordf (w) (format "%10d" w))
 
 (mix-wordf (+ 1 (* 64 (+ 2 (* 64 3)))))
 
@@ -53,7 +55,6 @@
 (test)
 
 ;; MACHINE STATE
-
 (defvar mix-rA 0)
 (defvar mix-rX 0)
 (defvar mix-rI1 0)
@@ -66,26 +67,41 @@
 (defvar mix-cmp 0)
 (defvar mix-overflow 0)
 (defvar mix-rIP 0) ;; instruction pointer, implicit in Knuth
-
+(defvar mix-hlt 0) ;; is halted? not in Knuth
 (defvar mix-M (make-vector 4000 0))
 
-(defun mix-ld (i) "store" (elt mix-M i))
-(defun mix-st (i x) "load" (aset mix-M i x))
+(defun mix-reset ()
+  (setq mix-rA 0)
+  (setq mix-rX 0)
+  (setq mix-rI1 0)
+  (setq mix-rI2 0)
+  (setq mix-rI3 0)
+  (setq mix-rI4 0)
+  (setq mix-rI5 0)
+  (setq mix-rI6 0)
+  (setq mix-rJ 0)
+  (setq mix-cmp 0)
+  (setq mix-overflow 0)
+  (setq mix-rIP 0)
+  (setq mix-hlt 0)
+  (setq mix-M (make-vector 4000 0)))
+
+(defun mix-ld (i) "load" (elt mix-M i))
+(defun mix-st (i x) "store" (aset mix-M i x))
 
 ;; PRINTING
 
 (defvar mix-buffer-name "*MIX*")
 
-(defun mix-buffer ()
-  (get-buffer-create mix-buffer-name))
+(defun mix-buffer () (get-buffer-create mix-buffer-name))
 
 (defun printf (fmt &rest rest)
   (insert (apply 'format (cons fmt rest))))
 
-
 (defun render ()
   "Render MIX state"
   (with-current-buffer (mix-buffer)
+    (read-only-mode 0)
     (erase-buffer)
     (printf "#\n# MIX\n#\n")
     (printf "rA:  %s\n" (mix-wordf mix-rA))
@@ -99,7 +115,7 @@
     (printf "rJ : %s\n" (mix-wordf mix-rJ))
     (printf "rIP: %s\n" (mix-wordf mix-rIP))
     (printf "cmp: %s. overflow:%s.\n"
-            (cond ((= mix-cmp 0) "0") ((> mix-cmp 0) "+") ((< mix-cmp 0) "-"))
+            (cond ((= mix-cmp 0) "E") ((> mix-cmp 0) "G") ((< mix-cmp 0) "L"))
             (cond ((= mix-overflow 0) "0") (t "OVERFLOW")))
     (printf "-------------------------------------------------------------------\n")
     (loop for i from 0 to 10 do
@@ -109,14 +125,15 @@
                   (+ i 20) (mix-wordf (mix-ld (+ i 20)))
                   (+ i 30) (mix-wordf (mix-ld (+ i 30)))))))
 
-
 ;;
 ;; Instructions
 ;;
 
+;; Enter data into a register
 (defun ENTA (x) (setq mix-rA x))
 (defun ENTX (x) (setq mix-rX x))
 
+;; Load memory contents to registers
 (defun LDA (i) (setq mix-rA (mix-ld i)))
 (defun LDX (i) (setq mix-rX (mix-ld i)))
 
@@ -124,11 +141,12 @@
 (defun STX (i) (mix-st i mix-rX))
 
 (defun ADD (x) (setq mix-rA (+ mix-rA x)))
-(defun SUM (x) (setq mix-rA (- mix-rA x)))
+(defun SUB (x) (setq mix-rA (- mix-rA x)))
 (defun MUL (x) (setq mix-rA (* mix-rA x)))
 (defun DIV (x) (setq mix-rA (/ mix-rA x)))
 
 (defun mix-cmp (a b)
+  (message "CMP %d %d" a b)
   (cond ((> a b) (setq mix-cmp +1))
         ((= a b) (setq mix-cmp  0))
         ((< a b) (setq mix-cmp -1))))
@@ -137,11 +155,76 @@
 (defun CMPX (i) (mix-cmp mix-rX (mix-ld i)))
 
 (defun JMP (i) (setq mix-rIP i))
-(defun JL  (i) (cond ((= mix-cmp -1) (setq mix-rIP i))))
-(defun JE  (i) (cond ((= mix-cmp 0)  (setq mix-rIP i))))
-(defun JG  (i) (cond ((= mix-cmp +1) (setq mix-rIP i))))
+(defun NXT ()  (setq mix-rIP (+ 1 mix-rIP)))
+(defun JL  (i) (if (= -1 mix-cmp) (setq mix-rIP i) (NXT)))
+(defun JE  (i) (if (= 0  mix-cmp) (setq mix-rIP i) (NXT)))
+(defun JG  (i) (if (= +1 mix-cmp) (setq mix-rIP i) (NXT)))
 
+(defun HLT ()  (setq mix-hlt 1))
 
+;;
+;; Instruction decoding
+;;
+(defun mix-ins-ld () (mix-ld mix-rIP))
+(defun mix-ins-op () (mix-word-c (mix-ins-ld)))
+(defun mix-ins-M  () (mix-word-a (mix-ins-ld)))
+(defun mix-ins-F  () (mix-word-f (mix-ins-ld)))
+(defun mix-ins-nxt () (setq mix-rIP (+ 1 mix-rIP)))
+
+(defun mix-step ()
+  (let ((op (mix-ins-op))
+        (M  (mix-ins-M))
+        (F  (mix-ins-F)))
+    (message (format "EXECUTING INSTRUCTION AT M[%d] %d : %d,%d" mix-rIP op M F))
+    (cond ((= op 8)  (LDA M) (mix-ins-nxt))
+          ((= op 15) (LDX M) (mix-ins-nxt))
+          ((= op 5)  (HLT))
+          ((= op 1)  (ADD M) (mix-ins-nxt))
+          ((= op 2)  (SUB M) (mix-ins-nxt))
+          ((= op 3)  (MUL M) (mix-ins-nxt))
+          ((= op 4)  (DIV M) (mix-ins-nxt))
+          ((= op 56) (CMPA M) (mix-ins-nxt))
+          ((= op 39) (cond ((= F 1) (JMP M))
+                           ((= F 4) (JL M))
+                           ((= F 5) (JE M))
+                           ((= F 6) (JG M))
+                           (t       (error "Invalid field"))))
+          (t         (message (format "NOT FOUND") (HLT))))))
+
+(defun mix-run ()
+  (while (= mix-hlt 0)
+    (mix-step)
+    (render)
+    (sit-for .2)))
+
+;;
+;; Mix Assembly
+;;
+(setq *MIXOP* (list 
+               :LDA 8 :LDX 15
+               :ADD 1 :SUB 2 :MUL 3 :DIV 4
+               :CMPA 56 :JMP 39
+               :HLT 5
+               ))
+(defun mix-asm-opcode (s) (or (getf *MIXOP* s) (error (format "No such operation: %s" s))))
+
+(defun mix-asm-word (s b1 b2 b3 b4 b5)
+  (* s (+ b5 (lsh (+ b4 (lsh (+ b3 (lsh (+ b2 (lsh (+ b1) 6)) 6)) 6)) 6))))
+(defun mix-asm-set-rA (s b1 b2 b3 b4 b5) (setq mix-rA (mix-asm-word s b1 b2 b3 b4 b5)))
+(defun mix-asm-set-M  (i s b1 b2 b3 b4 b5) (mix-st i (mix-asm-word s b1 b2 b3 b4 b5)))
+(defun mix-asm-sto-ins (i op &optional A F I)
+  (setq A (or A 0))
+  (setq I (or I 0))
+  (setq F (or F 0))
+  (let ((C  (mix-asm-opcode op))
+        (As (mix-word-sign A))
+        (A1 (mix-word-b4 A))
+        (A2 (mix-word-b5 A)))
+    (mix-st i (mix-asm-word As A1 A2 I F C))))
+
+(display-buffer (mix-buffer))
+
+(mix-reset)
 (ENTA 4)
 (STA 1)
 (LDA 0)
@@ -152,4 +235,14 @@
 (JL 5)
 (JE 6)
 (JG 7)
+(JMP 30)
+(mix-st           0 3)
+(mix-st           1 100)
+(mix-asm-sto-ins 30 :LDA)
+(mix-asm-sto-ins 31 :ADD 1)
+(mix-asm-sto-ins 32 :MUL 3)
+(mix-asm-sto-ins 33 :CMPA 1)  ; < M[3] ?
+(mix-asm-sto-ins 34 :JMP  31 4) ; -> JMP 31
+(mix-asm-sto-ins 35 :HLT)
 (render)
+(mix-run)
