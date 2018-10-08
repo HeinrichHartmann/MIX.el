@@ -29,17 +29,17 @@
 (defun mix-word-f  (w) (mix-word-b4 w))
 (defun mix-word-c  (w) (mix-word-b5 w))
 
-;; (defun mix-wordf (w)
-;;   "Retun string representation of mix-word"
-;;   (format "%s%02d.%02d.%02d.%02d.%02d"
-;;           (cond ((>= w 0) "+") (t "-"))
-;;           (mix-word-b1 w)
-;;           (mix-word-b2 w)
-;;           (mix-word-b3 w)
-;;           (mix-word-b4 w)
-;;           (mix-word-b5 w)))
+(defun mix-wordf-reg (w)
+  (format "%s%02d.%02d.%02d.%02d.%02d"
+          (cond ((>= w 0) "+") (t "-"))
+          (mix-word-b1 w)
+          (mix-word-b2 w)
+          (mix-word-b3 w)
+          (mix-word-b4 w)
+          (mix-word-b5 w)))
+(defun mix-wordf-dec (w) (format "%10d" w))
 
-(defun mix-wordf (w) (format "%10d" w))
+(defun mix-wordf (w) (mix-wordf-reg w))
 
 (mix-wordf (+ 1 (* 64 (+ 2 (* 64 3)))))
 
@@ -98,6 +98,11 @@
 (defun printf (fmt &rest rest)
   (insert (apply 'format (cons fmt rest))))
 
+(defun memf (i)
+  (if (= i mix-rIP)
+      (format "> M[%2d]: %s" i (mix-wordf (mix-ld i)))
+      (format "  M[%2d]: %s" i (mix-wordf (mix-ld i)))))
+
 (defun render ()
   "Render MIX state"
   (with-current-buffer (mix-buffer)
@@ -119,11 +124,12 @@
             (cond ((= mix-overflow 0) "0") (t "OVERFLOW")))
     (printf "-------------------------------------------------------------------\n")
     (loop for i from 0 to 10 do
-          (printf "M[%2d]: %s M[%d]: %s M[%d]: %s M[%d]: %s\n"
-                  (+ i  0) (mix-wordf (mix-ld i))
-                  (+ i 10) (mix-wordf (mix-ld (+ i 10)))
-                  (+ i 20) (mix-wordf (mix-ld (+ i 20)))
-                  (+ i 30) (mix-wordf (mix-ld (+ i 30)))))))
+          (printf "%s %s %s %s\n"
+                  (memf (+ i 0))
+                  (memf (+ i 10))
+                  (memf (+ i 20))
+                  (memf (+ i 30))
+                  (memf (+ i 40))))))
 
 ;;
 ;; Instructions
@@ -146,7 +152,7 @@
 (defun DIV (x) (setq mix-rA (/ mix-rA x)))
 
 (defun mix-cmp (a b)
-  (message "CMP %d %d" a b)
+  ;; (message "CMP %d %d" a b)
   (cond ((> a b) (setq mix-cmp +1))
         ((= a b) (setq mix-cmp  0))
         ((< a b) (setq mix-cmp -1))))
@@ -162,6 +168,29 @@
 
 (defun HLT ()  (setq mix-hlt 1))
 
+(mix-reset)
+
+(defun PRT (i)
+  "Print 0 terminated string to *MESSAGES*"
+  (let ((buf ()))
+    (while (/= 0 (mix-ld i))
+      (push (mix-ld i) buf)
+      (setq i (+ 1 i)))
+    (message (apply 'string (seq-reverse buf)))))
+
+(defun PRTN (i)
+  "Print number at memory position i"
+  (message (format "%d" (mix-ld i))))
+
+(defun test-prt ()
+  (mix-st 20 ?H)
+  (mix-st 21 ?e)
+  (mix-st 22 ?l)
+  (mix-st 23 ?l)
+  (mix-st 24 ?o)
+  (mix-st 25 ?!)
+  (PRT 20))
+
 ;;
 ;; Instruction decoding
 ;;
@@ -175,9 +204,11 @@
   (let ((op (mix-ins-op))
         (M  (mix-ins-M))
         (F  (mix-ins-F)))
-    (message (format "EXECUTING INSTRUCTION AT M[%d] %d : %d,%d" mix-rIP op M F))
+    ;; (message (format "EXECUTING INSTRUCTION AT M[%d] %d : %d,%d" mix-rIP op M F))
     (cond ((= op 8)  (LDA M) (mix-ins-nxt))
+          ((= op 9)  (STA M) (mix-ins-nxt))
           ((= op 15) (LDX M) (mix-ins-nxt))
+          ((= op 16) (STX M) (mix-ins-nxt))
           ((= op 5)  (HLT))
           ((= op 1)  (ADD M) (mix-ins-nxt))
           ((= op 2)  (SUB M) (mix-ins-nxt))
@@ -189,21 +220,27 @@
                            ((= F 5) (JE M))
                            ((= F 6) (JG M))
                            (t       (error "Invalid field"))))
+          ((= op 60) (PRT M) (mix-ins-nxt))
+          ((= op 61) (PRTN M) (mix-ins-nxt))
           (t         (message (format "NOT FOUND") (HLT))))))
 
 (defun mix-run ()
   (while (= mix-hlt 0)
     (mix-step)
     (render)
-    (sit-for .2)))
+    ;; (read-event)
+    (sit-for .1)
+    ))
 
 ;;
 ;; Mix Assembly
 ;;
 (setq *MIXOP* (list 
                :LDA 8 :LDX 15
+               :STA 9 :STX 16 ;; ??
                :ADD 1 :SUB 2 :MUL 3 :DIV 4
                :CMPA 56 :JMP 39
+               :PRT 60 :PRTN 61
                :HLT 5
                ))
 (defun mix-asm-opcode (s) (or (getf *MIXOP* s) (error (format "No such operation: %s" s))))
@@ -236,13 +273,22 @@
 (JE 6)
 (JG 7)
 (JMP 30)
-(mix-st           0 3)
-(mix-st           1 100)
-(mix-asm-sto-ins 30 :LDA)
-(mix-asm-sto-ins 31 :ADD 1)
-(mix-asm-sto-ins 32 :MUL 3)
-(mix-asm-sto-ins 33 :CMPA 1)  ; < M[3] ?
+(mix-st 20 ?R)
+(mix-st 21 ?E)
+(mix-st 22 ?S)
+(mix-st 23 ?:)
+(mix-st 24 ? )
+(mix-st 25 0)
+(mix-st 0 3)
+(mix-st 1 100)
+(mix-asm-sto-ins 30 :LDA 0) ; rA <- M[0]
+(mix-asm-sto-ins 31 :ADD 1) ; rA += 1
+(mix-asm-sto-ins 32 :MUL 3) ; rA *= 3
+(mix-asm-sto-ins 33 :CMPA 1) ; rA < M[1] ?
 (mix-asm-sto-ins 34 :JMP  31 4) ; -> JMP 31
-(mix-asm-sto-ins 35 :HLT)
+(mix-asm-sto-ins 35 :STA 2) ; store result in M[2]
+(mix-asm-sto-ins 36 :PRT 20) ; print RES:
+(mix-asm-sto-ins 37 :PRTN 2)
+(mix-asm-sto-ins 38 :HLT)
 (render)
 (mix-run)
