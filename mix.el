@@ -12,18 +12,21 @@
 ;; MIX-bytes are six bits long with values from 0..64
 ;; MIX-words consist of 5 MIX-bytes and a sign (5x6+1 = 31bits)
 ;; We represent negative number as 2 complement with sign bit set
-
+;;
 (assert (> most-positive-fixnum (lsh 2 31))
         "Number range not large enoght to hold MIX words")
 
+;; Standard addressing scheme
+;; | s | b1 | b2 | b3 | b4 | b5 |
 (defun mix-word-sign (w) (cond ((>= w 0) 1) (t -1)))
-
-;; 63 = 11111b masks lower 5 bits
 (defun mix-word-b5 (w) (logand 63 w))
 (defun mix-word-b4 (w) (mix-word-b5 (ash w -6)))
 (defun mix-word-b3 (w) (mix-word-b5 (ash w -12)))
 (defun mix-word-b2 (w) (mix-word-b5 (ash w -18)))
 (defun mix-word-b1 (w) (mix-word-b5 (ash w -24)))
+
+;; Alternative Addressing for instruction decoding
+;; | s | A | A | I | F | C |
 (defun mix-word-a  (w) (+ (* 64 (mix-word-b1 w)) (mix-word-b2 w)))
 (defun mix-word-i  (w) (mix-word-b3 w))
 (defun mix-word-f  (w) (mix-word-b4 w))
@@ -38,23 +41,11 @@
           (mix-word-b4 w)
           (mix-word-b5 w)))
 (defun mix-wordf-dec (w) (format "%10d" w))
-
 (defun mix-wordf (w) (mix-wordf-reg w))
 
-(mix-wordf (+ 1 (* 64 (+ 2 (* 64 3)))))
-
-(defun test ()
-  (assert (= (mix-word-sign -100) -1))
-  (assert (= (mix-word-sign 0) 1))
-  (assert (= (mix-word-sign 100) 1))
-  (assert (= (mix-word-b5   0)  0))
-  (assert (= (mix-word-b5   63) 63))
-  (assert (= (mix-word-b5   64) 0))
-  (assert (= (mix-word-b4   64) 1))
-)
-(test)
-
+;;
 ;; MACHINE STATE
+;;
 (defvar mix-rA 0)
 (defvar mix-rX 0)
 (defvar mix-rI1 0)
@@ -66,8 +57,8 @@
 (defvar mix-rJ 0)
 (defvar mix-cmp 0)
 (defvar mix-overflow 0)
+(defvar mix-hlt 0) ;; halted flag, not in Knuth
 (defvar mix-rIP 0) ;; instruction pointer, implicit in Knuth
-(defvar mix-hlt 0) ;; is halted? not in Knuth
 (defvar mix-M (make-vector 4000 0))
 
 (defun mix-reset ()
@@ -89,8 +80,9 @@
 (defun mix-ld (i) "load" (elt mix-M i))
 (defun mix-st (i x) "store" (aset mix-M i x))
 
+;;
 ;; PRINTING
-
+;;
 (defvar mix-buffer-name "*MIX*")
 
 (defun mix-buffer () (get-buffer-create mix-buffer-name))
@@ -132,20 +124,14 @@
                   (memf (+ i 40))))))
 
 ;;
-;; Instructions
+;; Instruction Set
 ;;
-
-;; Enter data into a register
 (defun ENTA (x) (setq mix-rA x))
 (defun ENTX (x) (setq mix-rX x))
-
-;; Load memory contents to registers
 (defun LDA (i) (setq mix-rA (mix-ld i)))
 (defun LDX (i) (setq mix-rX (mix-ld i)))
-
 (defun STA (i) (mix-st i mix-rA))
 (defun STX (i) (mix-st i mix-rX))
-
 (defun ADD (x) (setq mix-rA (+ mix-rA x)))
 (defun SUB (x) (setq mix-rA (- mix-rA x)))
 (defun MUL (x) (setq mix-rA (* mix-rA x)))
@@ -165,11 +151,7 @@
 (defun JL  (i) (if (= -1 mix-cmp) (setq mix-rIP i) (NXT)))
 (defun JE  (i) (if (= 0  mix-cmp) (setq mix-rIP i) (NXT)))
 (defun JG  (i) (if (= +1 mix-cmp) (setq mix-rIP i) (NXT)))
-
 (defun HLT ()  (setq mix-hlt 1))
-
-(mix-reset)
-
 (defun PRT (i)
   "Print 0 terminated string to *MESSAGES*"
   (let ((buf ()))
@@ -177,19 +159,9 @@
       (push (mix-ld i) buf)
       (setq i (+ 1 i)))
     (message (apply 'string (seq-reverse buf)))))
-
 (defun PRTN (i)
   "Print number at memory position i"
   (message (format "%d" (mix-ld i))))
-
-(defun test-prt ()
-  (mix-st 20 ?H)
-  (mix-st 21 ?e)
-  (mix-st 22 ?l)
-  (mix-st 23 ?l)
-  (mix-st 24 ?o)
-  (mix-st 25 ?!)
-  (PRT 20))
 
 ;;
 ;; Instruction decoding
@@ -199,7 +171,6 @@
 (defun mix-ins-M  () (mix-word-a (mix-ins-ld)))
 (defun mix-ins-F  () (mix-word-f (mix-ins-ld)))
 (defun mix-ins-nxt () (setq mix-rIP (+ 1 mix-rIP)))
-
 (defun mix-step ()
   (let ((op (mix-ins-op))
         (M  (mix-ins-M))
@@ -244,7 +215,6 @@
                :HLT 5
                ))
 (defun mix-asm-opcode (s) (or (getf *MIXOP* s) (error (format "No such operation: %s" s))))
-
 (defun mix-asm-word (s b1 b2 b3 b4 b5)
   (* s (+ b5 (lsh (+ b4 (lsh (+ b3 (lsh (+ b2 (lsh (+ b1) 6)) 6)) 6)) 6))))
 (defun mix-asm-set-rA (s b1 b2 b3 b4 b5) (setq mix-rA (mix-asm-word s b1 b2 b3 b4 b5)))
@@ -258,6 +228,22 @@
         (A1 (mix-word-b4 A))
         (A2 (mix-word-b5 A)))
     (mix-st i (mix-asm-word As A1 A2 I F C))))
+
+;;
+;; Tests
+;;
+(mix-wordf (+ 1 (* 64 (+ 2 (* 64 3)))))
+
+(defun test ()
+  (assert (= (mix-word-sign -100) -1))
+  (assert (= (mix-word-sign 0) 1))
+  (assert (= (mix-word-sign 100) 1))
+  (assert (= (mix-word-b5   0)  0))
+  (assert (= (mix-word-b5   63) 63))
+  (assert (= (mix-word-b5   64) 0))
+  (assert (= (mix-word-b4   64) 1))
+)
+(test)
 
 (display-buffer (mix-buffer))
 
@@ -292,3 +278,12 @@
 (mix-asm-sto-ins 38 :HLT)
 (render)
 (mix-run)
+
+(defun test-prt ()
+  (mix-st 20 ?H)
+  (mix-st 21 ?e)
+  (mix-st 22 ?l)
+  (mix-st 23 ?l)
+  (mix-st 24 ?o)
+  (mix-st 25 ?!)
+  (PRT 20))
