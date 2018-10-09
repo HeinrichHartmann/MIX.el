@@ -1,10 +1,10 @@
 ;;
 ;; MIX
 ;;
-
 (require 'cl)
 
-;;; Code:
+(defvar mix-exec-delay 0.1 "Delay between consecutive execution steps.")
+(defvar mix-exec-step-mode nil "Stepp each instruction mode.")
 
 ;;
 ;; Bit Operations
@@ -114,14 +114,11 @@
     (printf "cmp: %s. overflow:%s.\n"
             (cond ((= mix-cmp 0) "E") ((> mix-cmp 0) "G") ((< mix-cmp 0) "L"))
             (cond ((= mix-overflow 0) "0") (t "OVERFLOW")))
-    (printf "-------------------------------------------------------------------\n")
-    (loop for i from 0 to 10 do
-          (printf "%s %s %s %s\n"
+    (printf "----------------------------------------------------\n")
+    (loop for i from 0 to 19 do
+          (printf "%s %s\n"
                   (memf (+ i 0))
-                  (memf (+ i 10))
-                  (memf (+ i 20))
-                  (memf (+ i 30))
-                  (memf (+ i 40))))))
+                  (memf (+ i 20))))))
 
 ;;
 ;; Instruction Set
@@ -198,10 +195,10 @@
 (defun mix-run ()
   (while (= mix-hlt 0)
     (mix-step)
-    (render)
-    ;; (read-event)
-    (sit-for .1)
-    ))
+    (if mix-exec-step-mode
+        (progn (render) (read-event))
+      (if (> mix-exec-delay 0)
+          (progn (render) (sit-for mix-exec-delay))))))
 
 ;;
 ;; Mix Assembly
@@ -232,7 +229,6 @@
 ;;
 ;; Tests
 ;;
-(mix-wordf (+ 1 (* 64 (+ 2 (* 64 3)))))
 
 (defun test ()
   (assert (= (mix-word-sign -100) -1))
@@ -242,48 +238,33 @@
   (assert (= (mix-word-b5   63) 63))
   (assert (= (mix-word-b5   64) 0))
   (assert (= (mix-word-b4   64) 1))
+  (assert (string= "+00.00.03.02.01" (mix-wordf (+ 1 (* 64 (+ 2 (* 64 3)))))))
 )
 (test)
 
+(defun main()
+  (mix-reset)
+  (mix-st 20 ?R)
+  (mix-st 21 ?E)
+  (mix-st 22 ?S)
+  (mix-st 23 ?:)
+  (mix-st 24 ? )
+  (mix-st 25 0)
+  (mix-st 0 3)
+  (mix-st 1 100)
+  (mix-asm-sto-ins 30 :LDA 0)     ; rA <- M[0]
+  (mix-asm-sto-ins 31 :ADD 1)     ; rA += 1
+  (mix-asm-sto-ins 32 :MUL 3)     ; rA *= 3
+  (mix-asm-sto-ins 33 :CMPA 1)    ; rA < M[1] ?
+  (mix-asm-sto-ins 34 :JMP  31 4) ; -> JMP 31
+  (mix-asm-sto-ins 35 :STA 2)     ; store result in M[2]
+  (mix-asm-sto-ins 36 :PRT 20)    ; print RES:
+  (mix-asm-sto-ins 37 :PRTN 2)
+  (mix-asm-sto-ins 38 :HLT)
+  (JMP 30)
+  (mix-run))
+
+(setq mix-exec-step-mode nil)
+(setq mix-exec-step-delay 0.1)
 (display-buffer (mix-buffer))
-
-(mix-reset)
-(ENTA 4)
-(STA 1)
-(LDA 0)
-(ADD 123)
-(STA 5)
-(ADD -1)
-(CMPA 5)
-(JL 5)
-(JE 6)
-(JG 7)
-(JMP 30)
-(mix-st 20 ?R)
-(mix-st 21 ?E)
-(mix-st 22 ?S)
-(mix-st 23 ?:)
-(mix-st 24 ? )
-(mix-st 25 0)
-(mix-st 0 3)
-(mix-st 1 100)
-(mix-asm-sto-ins 30 :LDA 0) ; rA <- M[0]
-(mix-asm-sto-ins 31 :ADD 1) ; rA += 1
-(mix-asm-sto-ins 32 :MUL 3) ; rA *= 3
-(mix-asm-sto-ins 33 :CMPA 1) ; rA < M[1] ?
-(mix-asm-sto-ins 34 :JMP  31 4) ; -> JMP 31
-(mix-asm-sto-ins 35 :STA 2) ; store result in M[2]
-(mix-asm-sto-ins 36 :PRT 20) ; print RES:
-(mix-asm-sto-ins 37 :PRTN 2)
-(mix-asm-sto-ins 38 :HLT)
-(render)
-(mix-run)
-
-(defun test-prt ()
-  (mix-st 20 ?H)
-  (mix-st 21 ?e)
-  (mix-st 22 ?l)
-  (mix-st 23 ?l)
-  (mix-st 24 ?o)
-  (mix-st 25 ?!)
-  (PRT 20))
+(main)
